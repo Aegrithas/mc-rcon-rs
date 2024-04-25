@@ -1,0 +1,16 @@
+[package]
+name = "mc-rcon"
+version = "0.1.0"
+edition = "2021"
+authors = ["Aegrithas"]
+description = "A client implementation of Minecraft's RCON protocol"
+license = "MIT"
+repository = "https://github.com/Aegrithas/mc-rcon-rs"
+keywords = ["minecraft", "rcon", "commands", "protocol"]
+categories = ["network-programming"]
+
+[dependencies]
+arrayvec = "0.7.4"
+
+[package.metadata.docs.rs]
+rustdoc-args = ["--cfg", "docs_rs"]
