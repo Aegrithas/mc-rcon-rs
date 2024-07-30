@@ -110,7 +110,7 @@ impl RconClient {
     if self.is_logged_in() {
       Err(LogInError::AlreadyLoggedIn)?
     }
-    let SendResponse { good_auth, payload: _ } = self.send(LOGIN_TYPE, password)?;
+    let SendResponse { good_auth, payload: _ } = self.send(LogInPacket, password)?;
     if good_auth {
       Ok(())
     } else {
@@ -126,7 +126,8 @@ impl RconClient {
     id
   }
   
-  fn send(&self, r#type: i32, payload: &str) -> Result<SendResponse, SendError> {
+  fn send<K: PacketKind>(&self, kind: K, payload: &str) -> Result<SendResponse, SendError> {
+    let _ = kind;
     if payload.len() > MAX_OUTGOING_PAYLOAD_LEN {
       Err(SendError::PayloadTooLong)?
     }
@@ -142,7 +143,7 @@ impl RconClient {
     let mut out_buf: ArrayVec<u8, {I32_LEN + HEADER_LEN + MAX_OUTGOING_PAYLOAD_LEN}> = ArrayVec::new();
     out_buf.write_all(&out_len.to_le_bytes())?;
     out_buf.write_all(&out_id.to_le_bytes())?;
-    out_buf.write_all(&r#type.to_le_bytes())?;
+    out_buf.write_all(&K::TYPE.to_le_bytes())?;
     out_buf.write_all(payload.as_bytes())?;
     out_buf.write_all(&[b'\0', b'\0'])?; // null terminator and padding
     assert_eq!(out_buf.len(), I32_LEN + HEADER_LEN + payload.len());
@@ -161,13 +162,12 @@ impl RconClient {
     stream.read_exact(&mut payload_buf)?;
     stream.read_exact(&mut [0; 2])?; // expect null terminator and padding
     let payload = String::from_utf8(payload_buf).expect("response payload is not ASCII");
-    
     let good_auth = if in_id == -1 {
       false
     } else if in_id == out_id {
       true
     } else {
-      Err(io::Error::other("response packet id mismatched with login packet id"))?
+      Err(io::Error::other(K::INVLID_RESPONSE_ID_ERROR))?
     };
     Ok(SendResponse { good_auth, payload })
   }
@@ -213,13 +213,41 @@ impl RconClient {
     if !self.is_logged_in() {
       Err(CommandError::NotLoggedIn)?
     }
-    let SendResponse { good_auth, payload } = self.send(COMMAND_TYPE, command)?;
+    let SendResponse { good_auth, payload } = self.send(CommandPacket, command)?;
     if good_auth {
       Ok(payload)
     } else {
       Err(CommandError::NotLoggedIn)
     }
   }
+  
+}
+
+trait PacketKind {
+  
+  const TYPE: i32;
+  
+  const INVLID_RESPONSE_ID_ERROR: &'static str;
+  
+}
+
+struct LogInPacket;
+
+impl PacketKind for LogInPacket {
+  
+  const TYPE: i32 = LOGIN_TYPE;
+  
+  const INVLID_RESPONSE_ID_ERROR: &'static str = "response packet id mismatched with login packet id";
+  
+}
+
+struct CommandPacket;
+
+impl PacketKind for CommandPacket {
+  
+  const TYPE: i32 = COMMAND_TYPE;
+  
+  const INVLID_RESPONSE_ID_ERROR: &'static str = "response packet id mismatched with command packet id";
   
 }
 
