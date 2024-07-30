@@ -16,5 +16,4 @@ after which it uses Minecraft's `seed` command to query the world's generation s
 
 Assuming that the server is configured accordingly, this program will print a response from the server like `Seed: [-1137927873379713691]`.
 
-Note that, although RCON servers [can send multiple response packets](https://wiki.vg/RCON#Fragmentation), this crate currently does not handle that possibility.
-If you need that functionality, please open an issue.
+For excessively long responses, RCON servers [can send multiple response packets](https://wiki.vg/RCON#Fragmentation). This crate does handle this possibility, but as an implementation detail it will sometimes send extra `seed` commands.

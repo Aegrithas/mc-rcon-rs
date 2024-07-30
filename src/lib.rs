@@ -145,8 +145,8 @@ impl RconClient {
     out_buf.write_all(&out_id.to_le_bytes())?;
     out_buf.write_all(&K::TYPE.to_le_bytes())?;
     out_buf.write_all(payload.as_bytes())?;
-    out_buf.write_all(&[b'\0', b'\0'])?; // null terminator and padding
-    assert_eq!(out_buf.len(), I32_LEN + HEADER_LEN + payload.len());
+    out_buf.write_all(b"\0\0")?; // null terminator and padding
+    debug_assert_eq!(out_buf.len(), I32_LEN + HEADER_LEN + payload.len());
     stream.write_all(&mut out_buf)?;
     stream.flush()?;
     
@@ -161,17 +161,55 @@ impl RconClient {
     let mut payload_buf = vec![0; payload_len];
     stream.read_exact(&mut payload_buf)?;
     stream.read_exact(&mut [0; 2])?; // expect null terminator and padding
-    let payload = String::from_utf8(payload_buf).expect("response payload is not ASCII");
+      
     let good_auth = if in_id == -1 {
       false
     } else if in_id == out_id {
       true
     } else {
-      Err(io::Error::other(K::INVLID_RESPONSE_ID_ERROR))?
+      Err(io::Error::new(io::ErrorKind::InvalidData, K::INVLID_RESPONSE_ID_ERROR))?
     };
+    
+    if K::ACCEPTS_LONG_RESPONSES && payload_len >= MAX_INCOMING_PAYLOAD_LEN {
+      const CAP_COMMAND: &'static str = "seed";
+      let cap_len = i32::try_from(HEADER_LEN + CAP_COMMAND.len()).expect("cap payload is somehow too long");
+      let cap_id = self.get_next_id();
+      let mut cap_buf: ArrayVec<u8, {I32_LEN + HEADER_LEN + CAP_COMMAND.len()}> = ArrayVec::new();
+      cap_buf.write_all(&cap_len.to_le_bytes())?;
+      cap_buf.write_all(&cap_id.to_le_bytes())?;
+      cap_buf.write_all(&K::TYPE.to_le_bytes())?;
+      cap_buf.write_all(CAP_COMMAND.as_bytes())?;
+      cap_buf.write_all(b"\0\0")?;
+      debug_assert_eq!(cap_buf.len(), I32_LEN + HEADER_LEN + CAP_COMMAND.len());
+      stream.write_all(&mut cap_buf)?;
+      stream.flush()?;
+      
+      loop {
+        stream.read_exact(&mut in_len_bytes)?;
+        let inner_in_len = i32::from_le_bytes(in_len_bytes);
+        stream.read_exact(&mut in_id_bytes)?;
+        let inner_in_id = i32::from_le_bytes(in_id_bytes);
+        stream.read_exact(&mut [0; I32_LEN])?;
+        let inner_payload_len = usize::try_from(inner_in_len).expect("payload is too long") - HEADER_LEN;
+        let mut inner_payload_buf = vec![0; inner_payload_len];
+        stream.read_exact(&mut inner_payload_buf)?;
+        stream.read_exact(&mut [0; 2])?;
+        
+        if inner_in_id == cap_id {
+          break
+        } else if inner_in_id == in_id {
+          payload_buf.append(&mut inner_payload_buf);
+        } else if inner_in_id == -1 {
+          Err(io::Error::new(io::ErrorKind::InvalidData, "client became deauthenticated between packets"))?
+        } else {
+          Err(io::Error::new(io::ErrorKind::InvalidData, K::INVLID_RESPONSE_ID_ERROR))?
+        }
+      }
+    }
+    
+    let payload = String::from_utf8(payload_buf).expect("response payload is not ASCII");
     Ok(SendResponse { good_auth, payload })
   }
-  
   
   /// Attempts to log into the server with the given password.
   /// 
@@ -225,6 +263,8 @@ impl RconClient {
 
 trait PacketKind {
   
+  const ACCEPTS_LONG_RESPONSES: bool;
+  
   const TYPE: i32;
   
   const INVLID_RESPONSE_ID_ERROR: &'static str;
@@ -235,6 +275,8 @@ struct LogInPacket;
 
 impl PacketKind for LogInPacket {
   
+  const ACCEPTS_LONG_RESPONSES: bool = false;
+  
   const TYPE: i32 = LOGIN_TYPE;
   
   const INVLID_RESPONSE_ID_ERROR: &'static str = "response packet id mismatched with login packet id";
@@ -244,6 +286,8 @@ impl PacketKind for LogInPacket {
 struct CommandPacket;
 
 impl PacketKind for CommandPacket {
+  
+  const ACCEPTS_LONG_RESPONSES: bool = true;
   
   const TYPE: i32 = COMMAND_TYPE;
   
